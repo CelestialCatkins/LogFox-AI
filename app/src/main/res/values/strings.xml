@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">LogFox AI</string>
+    <string name="ai_accessibility_description">LogFox AI 使用无障碍服务读取界面、模拟点击、滑动与输入，供本机 MCP 服务调用。数据不会离开设备。</string>
+    <string name="ai_title">AI 与 MCP</string>
+</resources>

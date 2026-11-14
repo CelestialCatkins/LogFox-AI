@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory
+        android:title="MCP 服务"
+        app:iconSpaceReserved="false"
+        app:allowDividerAbove="false">
+
+        <SwitchPreferenceCompat
+            android:key="ai_enabled"
+            android:title="启用 MCP 服务"
+            android:summary="本地 HTTP 服务，供 AI 连接"
+            android:icon="@drawable/ic_settings_service"
+            app:iconSpaceReserved="false"
+            app:widgetLayout="@layout/preference_material_switch" />
+
+        <EditTextPreference
+            android:key="ai_port"
+            android:title="端口"
+            android:icon="@drawable/ic_settings_handyman"
+            android:inputType="number"
+            android:dialogTitle="监听端口（1024–65000）"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            android:key="ai_status"
+            android:title="运行状态"
+            android:selectable="false" />
+
+        <Preference
+            android:key="ai_copy"
+            android:title="复制连接地址"
+            android:icon="@drawable/ic_add_link" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="权限"
+        app:iconSpaceReserved="false"
+        app:allowDividerAbove="false">
+
+        <Preference
+            android:key="ai_access"
+            android:title="无障碍服务"
+            android:icon="@drawable/ic_settings_ui" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="AI 工具"
+        app:iconSpaceReserved="false"
+        app:allowDividerAbove="false">
+
+        <Preference
+            android:key="ai_tools"
+            android:title="工具列表"
+            android:icon="@drawable/ic_settings_service" />
+        <Preference
+            android:key="ai_log"
+            android:title="最近调用"
+            android:icon="@drawable/ic_settings_notifications" />
+        <Preference
+            android:key="ai_help"
+            android:title="使用说明"
+            android:icon="@drawable/ic_settings_info" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="关于"
+        app:iconSpaceReserved="false"
+        app:allowDividerAbove="false">
+
+        <Preference
+            android:key="ai_about"
+            android:title="LogFox AI"
+            android:summary="基于 LogFox · 数据仅在本机 · MCP 不联网"
+            android:selectable="false"
+            android:icon="@drawable/ic_settings_info" />
+    </PreferenceCategory>
+</PreferenceScreen>
