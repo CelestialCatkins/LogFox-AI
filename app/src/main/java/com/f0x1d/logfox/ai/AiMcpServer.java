@@ -1,20 +1,14 @@
 package com.f0x1d.logfox.ai;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.os.Build;
 import android.util.DisplayMetrics;
-import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -26,7 +20,10 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Minimal MCP server (JSON-RPC 2.0 over HTTP) for LogFox AI.
+ * MCP server (JSON-RPC 2.0 over HTTP) exposing LogFox debug data:
+ * structured logs, crash records, app/process/device info.
+ *
+ * Deliberately text-only: no screenshots, no touch injection.
  *
  * POST http://127.0.0.1:PORT/mcp
  * GET  http://127.0.0.1:PORT/health
@@ -34,18 +31,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class AiMcpServer {
 
     public static final int DEFAULT_PORT = 18923;
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "2.0.0";
 
     private final Context ctx;
+    private final AiDebug debug;
     private ServerSocket server;
-    private Thread acceptor;
     private volatile boolean running;
     private volatile int port = DEFAULT_PORT;
     private final AtomicInteger requests = new AtomicInteger();
     private volatile long startedAt;
+    private Thread acceptor;
 
-    public AiMcpServer(Context context) {
+    public AiMcpServer(Context context, AiDebug debug) {
         this.ctx = context.getApplicationContext();
+        this.debug = debug;
     }
 
     public int port() {
@@ -54,10 +53,6 @@ public final class AiMcpServer {
 
     public boolean running() {
         return running;
-    }
-
-    public long startedAt() {
-        return startedAt;
     }
 
     public int requests() {
@@ -115,7 +110,7 @@ public final class AiMcpServer {
 
     private void serve(Socket s) {
         try (Socket sock = s) {
-            sock.setSoTimeout(30000);
+            sock.setSoTimeout(60000);
             InputStream in = sock.getInputStream();
             OutputStream out = sock.getOutputStream();
 
@@ -235,7 +230,7 @@ public final class AiMcpServer {
                     result.put("capabilities", caps);
                     JSONObject info = new JSONObject();
                     info.put("name", "logfox-ai");
-                    info.put("title", "LogFox AI");
+                    info.put("title", "LogFox AI Debug");
                     info.put("version", VERSION);
                     result.put("serverInfo", info);
                     result.put("instructions", instructions());
@@ -275,12 +270,10 @@ public final class AiMcpServer {
     }
 
     private String instructions() {
-        return "LogFox AI controls this Android device through Accessibility. "
-                + "Coordinates are physical pixels; screen size is in observe.status. "
-                + "Preferred loop: observe -> tap_ref/tap_text (or swipe/gesture) -> wait_idle/wait_for -> observe. "
-                + "Refs stay valid until the next observe/ui_dump/find. "
-                + "Prefer text/ref targeting over raw coordinates. Use wait_for instead of fixed sleeps. "
-                + "observe returns a compact outline plus interactive targets; ui_dump returns the full tree.";
+        return "LogFox AI is a debug-focused MCP server. It returns text/JSON only (no screenshots, no touch). "
+                + "Typical flow: app_info -> logs_dump (level=W/E, package=...) -> crash_buffer / crashes_list "
+                + "-> crash_detail -> dumpsys. Use debug_report for a one-call diagnosis bundle, "
+                + "logs_wait to wait for a log pattern, and crash_watch to catch a crash while reproducing.";
     }
 
     private JSONObject ok(Object id, JSONObject result) {
@@ -312,101 +305,55 @@ public final class AiMcpServer {
 
     private JSONArray toolList() {
         JSONArray a = new JSONArray();
-        a.put(tool("status", "Service/accessibility/screen status. Call this first if unsure.",
+        a.put(tool("status", "Server, terminal/log-access and crash-DB status.",
                 s("{\"type\":\"object\",\"properties\":{}}")));
-        a.put(tool("observe",
-                "One-call snapshot: current app, screen size, keyboard, focus, compact text outline, "
-                        + "and interactive targets with refs. Set screenshot=true to also get a PNG.",
-                s("{\"type\":\"object\",\"properties\":{"
-                        + "\"limit\":{\"type\":\"integer\",\"description\":\"max targets, default 80\"},"
-                        + "\"screenshot\":{\"type\":\"boolean\"},"
-                        + "\"scale\":{\"type\":\"number\",\"description\":\"screenshot scale 0.1-1, default 0.5\"}"
-                        + "}}")));
-        a.put(tool("ui_dump",
-                "Full accessibility tree with bounds and refs. Use when observe is not enough.",
-                s("{\"type\":\"object\",\"properties\":{"
-                        + "\"limit\":{\"type\":\"integer\",\"default\":400},"
-                        + "\"all\":{\"type\":\"boolean\",\"description\":\"include non-interactive nodes\"}"
-                        + "}}")));
-        a.put(tool("find", "Find nodes by text/desc/id/class; returns refs and bounds.",
-                s("{\"type\":\"object\",\"properties\":{"
-                        + "\"text\":{\"type\":\"string\"},\"desc\":{\"type\":\"string\"},"
-                        + "\"id\":{\"type\":\"string\"},\"class\":{\"type\":\"string\"},"
-                        + "\"exact\":{\"type\":\"boolean\"},\"clickable\":{\"type\":\"boolean\"},"
-                        + "\"limit\":{\"type\":\"integer\"}}}")));
-        a.put(tool("tap", "Tap absolute pixel coordinates.",
-                s("{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"integer\"},"
-                        + "\"y\":{\"type\":\"integer\"}},\"required\":[\"x\",\"y\"]}")));
-        a.put(tool("tap_ref", "Tap a node by ref from the latest observe/ui_dump/find.",
-                s("{\"type\":\"object\",\"properties\":{\"ref\":{\"type\":\"integer\"},"
-                        + "\"long\":{\"type\":\"boolean\"}},\"required\":[\"ref\"]}")));
-        a.put(tool("tap_text", "Find visible text/description and tap it (clickable ancestor first).",
-                s("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},"
-                        + "\"exact\":{\"type\":\"boolean\"},\"index\":{\"type\":\"integer\"}},"
-                        + "\"required\":[\"text\"]}")));
-        a.put(tool("long_press", "Long press by coordinates or by ref.",
-                s("{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"integer\"},"
-                        + "\"y\":{\"type\":\"integer\"},\"ref\":{\"type\":\"integer\"},"
-                        + "\"ms\":{\"type\":\"integer\"}}}")));
-        a.put(tool("swipe", "Swipe from (x1,y1) to (x2,y2). ms defaults to 300.",
-                s("{\"type\":\"object\",\"properties\":{\"x1\":{\"type\":\"integer\"},"
-                        + "\"y1\":{\"type\":\"integer\"},\"x2\":{\"type\":\"integer\"},"
-                        + "\"y2\":{\"type\":\"integer\"},\"ms\":{\"type\":\"integer\"}},"
-                        + "\"required\":[\"x1\",\"y1\",\"x2\",\"y2\"]}")));
-        a.put(tool("gesture",
-                "Multi-touch gesture. strokes is an array of strokes, each an array of [x,y] points. "
-                        + "Two strokes with opposite directions = pinch/zoom.",
-                s("{\"type\":\"object\",\"properties\":{\"strokes\":{\"type\":\"array\"},"
-                        + "\"duration_ms\":{\"type\":\"integer\"}},\"required\":[\"strokes\"]}")));
-        a.put(tool("scroll", "Scroll a container: direction up/down/left/right (swipe direction).",
-                s("{\"type\":\"object\",\"properties\":{\"direction\":{\"type\":\"string\"},"
-                        + "\"ref\":{\"type\":\"integer\"},\"x\":{\"type\":\"integer\"},"
-                        + "\"y\":{\"type\":\"integer\"}}}")));
-        a.put(tool("key", "Global key: back, home, recents, notifications, quick.",
-                s("{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},"
-                        + "\"required\":[\"name\"]}")));
-        a.put(tool("text", "Set text in the focused input (or at ref). submit sends IME enter.",
-                s("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},"
-                        + "\"ref\":{\"type\":\"integer\"},\"submit\":{\"type\":\"boolean\"}},"
-                        + "\"required\":[\"text\"]}")));
-        a.put(tool("open_app", "Launch an app by package name or label.",
-                s("{\"type\":\"object\",\"properties\":{\"app\":{\"type\":\"string\"}},"
-                        + "\"required\":[\"app\"]}")));
-        a.put(tool("list_apps", "List launchable apps, optionally filtered by label/package.",
-                s("{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},"
-                        + "\"limit\":{\"type\":\"integer\"}}}")));
-        a.put(tool("screenshot", "PNG screenshot. Returns text + image content.",
-                s("{\"type\":\"object\",\"properties\":{\"scale\":{\"type\":\"number\"},"
-                        + "\"return_image\":{\"type\":\"boolean\"}}}")));
-        a.put(tool("wait_for",
-                "Wait until text/desc/id/pkg/activity appears (or disappears with gone=true).",
-                s("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},"
-                        + "\"desc\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},"
-                        + "\"pkg\":{\"type\":\"string\"},\"activity\":{\"type\":\"string\"},"
-                        + "\"exact\":{\"type\":\"boolean\"},\"gone\":{\"type\":\"boolean\"},"
-                        + "\"timeout_ms\":{\"type\":\"integer\",\"default\":8000}}}")));
-        a.put(tool("wait_idle", "Wait until the UI stops changing.",
-                s("{\"type\":\"object\",\"properties\":{\"stable_ms\":{\"type\":\"integer\",\"default\":700},"
-                        + "\"timeout_ms\":{\"type\":\"integer\",\"default\":8000}}}")));
-        a.put(tool("clipboard", "Get or set the clipboard. Set `set` to write.",
-                s("{\"type\":\"object\",\"properties\":{\"set\":{\"type\":\"string\"},"
-                        + "\"get\":{\"type\":\"boolean\"}}}")));
-        a.put(tool("wake", "Wake the screen (keeps it on briefly) when it is off.",
+        a.put(tool("device_info", "Device: model, Android, ABI, memory, storage, screen.",
                 s("{\"type\":\"object\",\"properties\":{}}")));
-        a.put(tool("toast", "Show a toast on the device.",
-                s("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},"
-                        + "\"required\":[\"text\"]}")));
-        a.put(tool("batch",
-                "Run multiple tool calls sequentially (max 60), with optional wait_ms between steps. "
-                        + "Great for multi-step flows.",
+        a.put(tool("apps_list", "Installed apps with version/uid; filter by label or package.",
+                s("{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"}}}")));
+        a.put(tool("app_info", "Package details and running pid.",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"}},\"required\":[\"package\"]}")));
+        a.put(tool("processes", "Running processes (ps -A), filter by name.",
+                s("{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"}}}")));
+        a.put(tool("logs_dump",
+                "Structured logcat snapshot. Filter by package/pid/tag/level/contains; level=V,D,I,W,E,F. "
+                        + "Returns entries plus a rendered text tail.",
+                s("{\"type\":\"object\",\"properties\":{"
+                        + "\"package\":{\"type\":\"string\"},\"pid\":{\"type\":\"string\"},"
+                        + "\"tag\":{\"type\":\"string\"},\"level\":{\"type\":\"string\"},"
+                        + "\"contains\":{\"type\":\"string\"},\"regex\":{\"type\":\"boolean\"},"
+                        + "\"buffer\":{\"type\":\"string\",\"description\":\"main/system/crash\"},"
+                        + "\"limit\":{\"type\":\"integer\"}}}")));
+        a.put(tool("logs_wait", "Wait for a new log line matching contains/regex (for reproducing).",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},"
+                        + "\"contains\":{\"type\":\"string\"},\"regex\":{\"type\":\"boolean\"},"
+                        + "\"timeout_ms\":{\"type\":\"integer\"}}}")));
+        a.put(tool("log_stats", "Counts by level and top tags for a window.",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},"
+                        + "\"buffer\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"}}}")));
+        a.put(tool("crashes_list", "Crashes recorded by LogFox (Java/JNI/ANR).",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},"
+                        + "\"limit\":{\"type\":\"integer\"}}}")));
+        a.put(tool("crash_detail", "Full LogFox crash record with stack/log lines.",
+                s("{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"}},\"required\":[\"id\"]}")));
+        a.put(tool("crash_buffer", "System crash buffer (logcat -b crash) filtered by package.",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},"
+                        + "\"limit\":{\"type\":\"integer\"}}}")));
+        a.put(tool("crash_watch", "Wait for a new crash while reproducing; returns crash text + recent W/E logs.",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},"
+                        + "\"timeout_ms\":{\"type\":\"integer\"}}}")));
+        a.put(tool("debug_report",
+                "One-call diagnosis bundle: app info, W/E logs, crash records, crash buffer, stats, device.",
+                s("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},"
+                        + "\"log_limit\":{\"type\":\"integer\"}},\"required\":[\"package\"]}")));
+        a.put(tool("dumpsys", "Run dumpsys for a whitelisted service (activity/window/package/meminfo/dropbox/...).",
+                s("{\"type\":\"object\",\"properties\":{\"service\":{\"type\":\"string\"}}}")));
+        a.put(tool("batch", "Run several debug tool calls sequentially.",
                 s("{\"type\":\"object\",\"properties\":{\"steps\":{\"type\":\"array\","
                         + "\"items\":{\"type\":\"object\",\"properties\":{"
                         + "\"tool\":{\"type\":\"string\"},\"arguments\":{\"type\":\"object\"},"
                         + "\"wait_ms\":{\"type\":\"integer\"}}}}}}")));
-        a.put(tool("logcat", "Read recent logcat lines (needs READ_LOGS/Shizuku on modern Android).",
-                s("{\"type\":\"object\",\"properties\":{\"lines\":{\"type\":\"integer\",\"default\":150},"
-                        + "\"contains\":{\"type\":\"string\"}}}")));
-        a.put(tool("help", "List tool names and a short usage recipe.",
+        a.put(tool("help", "List tools and a recommended debug workflow.",
                 s("{\"type\":\"object\",\"properties\":{}}")));
         return a;
     }
@@ -442,171 +389,44 @@ public final class AiMcpServer {
     }
 
     private JSONObject callTool(String name, JSONObject a, int depth) throws Exception {
-        AiAccessibilityService a11y = AiAccessibilityService.get();
         AiLog.i("tool", name + " " + a.toString());
         switch (name) {
             case "status":
             case "health":
                 return text(health().toString());
-            case "observe": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                int limit = a.optInt("limit", 80);
-                JSONObject o = a11y.observe(limit, true);
-                if (!o.optBoolean("ok", false)) return text(o.toString());
-                JSONArray content = new JSONArray();
-                content.put(new JSONObject().put("type", "text").put("text", o.toString()));
-                if (a.optBoolean("screenshot", false)) {
-                    JSONObject shot = screenshot(a.optDouble("scale", 0.5), true);
-                    JSONArray sc = shot.optJSONArray("content");
-                    if (sc != null) for (int i = 0; i < sc.length(); i++) content.put(sc.get(i));
-                }
-                return content(content);
-            }
-            case "ui_dump": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                return text(a11y.dump(a.optInt("limit", 400), a.optBoolean("all", false), true).toString());
-            }
-            case "find": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONArray arr = a11y.find(a.optString("text", null), a.optString("desc", null),
-                        a.optString("id", null), a.optString("class", null),
-                        a.has("clickable") ? a.optBoolean("clickable") : null,
-                        a.optInt("limit", 20), a.optBoolean("exact", false));
-                JSONObject o = new JSONObject();
-                o.put("ok", true);
-                o.put("count", arr.length());
-                o.put("nodes", arr);
-                return text(o.toString());
-            }
-            case "tap": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                boolean ok = a11y.tap(a.optInt("x"), a.optInt("y"));
-                return ok ? text("{\"ok\":true}") : fail("tap failed");
-            }
-            case "tap_ref": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject o = a11y.tapRef(a.optInt("ref"), a.optBoolean("long", false));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "tap_text": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject o = a11y.tapText(a.optString("text", ""), a.optBoolean("exact", false),
-                        a.optInt("index", 0));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "long_press": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                boolean ok;
-                if (a.has("ref")) {
-                    JSONObject o = a11y.tapRef(a.optInt("ref"), true);
-                    ok = o.optBoolean("ok", false);
-                } else {
-                    ok = a11y.longPress(a.optInt("x"), a.optInt("y"), a.optLong("ms", 800));
-                }
-                return ok ? text("{\"ok\":true}") : fail("long press failed");
-            }
-            case "swipe": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                boolean ok = a11y.swipe(a.optInt("x1"), a.optInt("y1"),
-                        a.optInt("x2"), a.optInt("y2"), a.optLong("ms", 300));
-                return ok ? text("{\"ok\":true}") : fail("swipe failed");
-            }
-            case "gesture": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONArray strokes = a.optJSONArray("strokes");
-                long dur = Math.min(60000, Math.max(30, a.optLong("duration_ms", 300)));
-                boolean ok = a11y.multiGesture(strokes, dur);
-                return ok ? text("{\"ok\":true}") : fail("gesture failed");
-            }
-            case "scroll": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject o = a11y.scroll(a.optString("direction", "down"),
-                        a.has("ref") ? a.optInt("ref") : null,
-                        a.optInt("x"), a.optInt("y"));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "key": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                boolean ok = a11y.key(a.optString("name", "back"));
-                return ok ? text("{\"ok\":true}") : fail("unknown key: " + a.optString("name"));
-            }
-            case "text": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject o = a11y.setText(a.optString("text", ""),
-                        a.has("ref") ? a.optInt("ref") : null, a.optBoolean("submit", false));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "open_app": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject o = a11y.openApp(a.optString("app", ""));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "list_apps": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONArray all = a11y.apps();
-                String q = a.optString("query", "").toLowerCase(Locale.ROOT);
-                int max = a.optInt("limit", 200);
-                JSONArray out = new JSONArray();
-                for (int i = 0; i < all.length() && out.length() < max; i++) {
-                    JSONObject app = all.getJSONObject(i);
-                    if (!q.isEmpty()) {
-                        String label = app.optString("label", "").toLowerCase(Locale.ROOT);
-                        String pkg = app.optString("pkg", "").toLowerCase(Locale.ROOT);
-                        if (!label.contains(q) && !pkg.contains(q)) continue;
-                    }
-                    out.put(app);
-                }
-                JSONObject o = new JSONObject();
-                o.put("ok", true);
-                o.put("count", out.length());
-                o.put("apps", out);
-                return text(o.toString());
-            }
-            case "screenshot":
-                return screenshot(a.optDouble("scale", 0.5), a.optBoolean("return_image", true));
-            case "wait_for": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject cond = new JSONObject();
-                cond.put("text", a.optString("text", ""));
-                cond.put("desc", a.optString("desc", ""));
-                cond.put("id", a.optString("id", ""));
-                cond.put("pkg", a.optString("pkg", ""));
-                cond.put("activity", a.optString("activity", ""));
-                cond.put("exact", a.optBoolean("exact", false));
-                JSONObject o = a11y.waitFor(cond, a.optLong("timeout_ms", 8000),
-                        a.optBoolean("gone", false));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "wait_idle": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                JSONObject o = a11y.waitIdle(a.optLong("stable_ms", 700),
-                        a.optLong("timeout_ms", 8000));
-                return o.optBoolean("ok", false) ? text(o.toString()) : fail(o.toString());
-            }
-            case "clipboard": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                boolean get = a.has("get") && a.optBoolean("get");
-                if (!get && !a.has("set")) get = true;
-                JSONObject o = a11y.clipboard(a.has("set") ? a.optString("set") : null);
-                return text(o.toString());
-            }
-            case "wake": {
-                if (a11y == null) return fail("accessibility service is not enabled");
-                return text(a11y.wake().toString());
-            }
-            case "toast": {
-                if (a11y != null) a11y.toast(a.optString("text", ""));
-                else Toast.makeText(ctx, a.optString("text", ""), Toast.LENGTH_SHORT).show();
-                return text("{\"ok\":true}");
-            }
+            case "device_info":
+                return text(debug.deviceInfo().toString());
+            case "apps_list":
+                return text(debug.apps(a).toString());
+            case "app_info":
+                return text(debug.appInfo(a).toString());
+            case "processes":
+                return text(debug.processes(a).toString());
+            case "logs_dump":
+                return text(debug.logs(a).toString());
+            case "logs_wait":
+                return text(debug.logsWait(a).toString());
+            case "log_stats":
+                return text(debug.logStats(a).toString());
+            case "crashes_list":
+                return text(debug.crashes(a).toString());
+            case "crash_detail":
+                return text(debug.crashDetail(a).toString());
+            case "crash_buffer":
+                return text(debug.crashBuffer(a).toString());
+            case "crash_watch":
+                return text(debug.crashWatch(a).toString());
+            case "debug_report":
+                return text(debug.debugReport(a).toString());
+            case "dumpsys":
+                return text(debug.dumpsys(a).toString());
             case "batch": {
                 if (depth > 0) return fail("nested batch is not allowed");
-                if (a11y == null) return fail("accessibility service is not enabled");
                 JSONArray steps = a.optJSONArray("steps");
                 if (steps == null) return fail("steps is required");
                 JSONArray results = new JSONArray();
                 boolean allOk = true;
-                for (int i = 0; i < steps.length() && i < 60; i++) {
+                for (int i = 0; i < steps.length() && i < 30; i++) {
                     JSONObject step = steps.optJSONObject(i);
                     if (step == null) continue;
                     String tool = step.optString("tool", "");
@@ -630,8 +450,6 @@ public final class AiMcpServer {
                 o.put("results", results);
                 return text(o.toString());
             }
-            case "logcat":
-                return text(logcat(a.optInt("lines", 150), a.optString("contains", "")).toString());
             case "help": {
                 StringBuilder sb = new StringBuilder();
                 JSONArray tools = toolList();
@@ -640,92 +458,12 @@ public final class AiMcpServer {
                     sb.append("- ").append(t.optString("name")).append(": ")
                             .append(t.optString("description")).append('\n');
                 }
-                sb.append("\nRecipe: status -> observe -> tap_ref/tap_text -> wait_idle -> observe. "
-                        + "Use batch for multi-step flows.");
+                sb.append("\nWorkflow: app_info -> logs_dump(level=W) -> crash_buffer -> crash_detail; "
+                        + "debug_report for a bundle; crash_watch while reproducing.");
                 return text(sb.toString());
             }
             default:
                 return fail("unknown tool: " + name);
-        }
-    }
-
-    private JSONObject screenshot(double scale, boolean returnImage) {
-        AiAccessibilityService a11y = AiAccessibilityService.get();
-        if (a11y == null) return fail("accessibility service is not enabled");
-        Bitmap bmp = a11y.screenshot(4);
-        if (bmp == null) return fail("screenshot failed (secure screen or rate limited)");
-        float sc = (float) scale;
-        if (sc <= 0 || sc > 1) sc = 0.5f;
-        Bitmap out = bmp;
-        if (sc < 0.999f) {
-            out = Bitmap.createScaledBitmap(bmp,
-                    Math.max(1, (int) (bmp.getWidth() * sc)),
-                    Math.max(1, (int) (bmp.getHeight() * sc)), true);
-        }
-        String path = "";
-        try {
-            File dir = new File(ctx.getFilesDir(), "shots");
-            if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, "shot-" + System.currentTimeMillis() + ".png");
-            try (FileOutputStream fos = new FileOutputStream(f)) {
-                out.compress(Bitmap.CompressFormat.PNG, 100, fos);
-            }
-            path = f.getAbsolutePath();
-        } catch (Throwable t) {
-            AiLog.e("mcp", "save shot: " + t);
-        }
-        try {
-            JSONArray content = new JSONArray();
-            content.put(new JSONObject().put("type", "text").put("text",
-                    "screenshot " + out.getWidth() + "x" + out.getHeight()
-                            + (path.isEmpty() ? "" : " saved=" + path)));
-            if (returnImage) {
-                content.put(new JSONObject().put("type", "image")
-                        .put("data", AiAccessibilityService.pngBase64(out))
-                        .put("mimeType", "image/png"));
-            }
-            return content(content);
-        } catch (Throwable t) {
-            return fail("encode failed: " + t);
-        }
-    }
-
-    private JSONObject logcat(int lines, String contains) {
-        int n = Math.max(10, Math.min(1000, lines));
-        StringBuilder sb = new StringBuilder();
-        int exit = -1;
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{
-                    "logcat", "-d", "-t", String.valueOf(n), "-v", "time"});
-            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String line;
-            int count = 0;
-            String filter = contains == null ? "" : contains.toLowerCase(Locale.ROOT);
-            while ((line = r.readLine()) != null) {
-                if (!filter.isEmpty() && !line.toLowerCase(Locale.ROOT).contains(filter)) continue;
-                if (count++ > 0) sb.append('\n');
-                sb.append(line);
-                if (sb.length() > 200000) break;
-            }
-            try {
-                exit = p.waitFor();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        } catch (Throwable t) {
-            sb.append("logcat error: ").append(t);
-        }
-        try {
-            JSONObject o = new JSONObject();
-            o.put("ok", exit == 0 || sb.length() > 0);
-            o.put("exit", exit);
-            o.put("lines", sb.toString());
-            if (exit != 0) {
-                o.put("hint", "logcat may be restricted; grant READ_LOGS via adb/Shizuku or use LogFox UI");
-            }
-            return o;
-        } catch (Throwable t) {
-            return new JSONObject();
         }
     }
 
@@ -734,23 +472,17 @@ public final class AiMcpServer {
     public JSONObject health() {
         JSONObject o = new JSONObject();
         try {
-            AiAccessibilityService a11y = AiAccessibilityService.get();
             o.put("ok", true);
             o.put("service", running);
             o.put("port", port);
             o.put("endpoint", "http://127.0.0.1:" + port + "/mcp");
-            o.put("accessibility", a11y != null);
             o.put("version", VERSION);
             o.put("android", Build.VERSION.RELEASE);
             o.put("sdk", Build.VERSION.SDK_INT);
             o.put("device", Build.MANUFACTURER + " " + Build.MODEL);
             o.put("requests", requests.get());
             o.put("uptime_ms", startedAt == 0 ? 0 : System.currentTimeMillis() - startedAt);
-            DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-            o.put("screen", new JSONArray().put(dm.widthPixels).put(dm.heightPixels));
-            if (a11y != null) {
-                o.put("state", a11y.status());
-            }
+            o.put("terminal", debug.terminalInfo());
         } catch (Throwable t) {
             try {
                 o.put("ok", false);
@@ -782,16 +514,6 @@ public final class AiMcpServer {
             c.put(new JSONObject().put("type", "text").put("text", s));
             r.put("content", c);
             r.put("isError", true);
-        } catch (Throwable ignored) {
-        }
-        return r;
-    }
-
-    private JSONObject content(JSONArray content) {
-        JSONObject r = new JSONObject();
-        try {
-            r.put("content", content);
-            r.put("isError", false);
         } catch (Throwable ignored) {
         }
         return r;

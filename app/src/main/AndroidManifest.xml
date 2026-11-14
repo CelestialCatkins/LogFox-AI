@@ -8,7 +8,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".LogFoxApp"
@@ -45,20 +44,9 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="local MCP server for AI phone control" />
+                android:value="local MCP debug data server" />
         </service>
 
-        <service
-            android:name="com.f0x1d.logfox.ai.AiAccessibilityService"
-            android:exported="true"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/ai_accessibility" />
-        </service>
 
         <receiver android:name=".receiver.BootReceiver" android:exported="true">
             <intent-filter>

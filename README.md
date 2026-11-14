@@ -4,7 +4,7 @@
 
 Yet another LogCat reader for Android
 
-> 本仓库是 LogFox 的改造版：保留原有 Material You 界面，新增本地 **MCP 服务** 与 **无障碍触控**，让 AI 可以像人一样观察、点击、滑动、输入。包名为 `com.f0x1d.logfox.ai`，可与原版 LogFox 共存。
+> 本仓库是 LogFox 的改造版：保留原有 Material You 界面，新增面向 AI 调试的本地 **MCP 服务**，向 AI 提供结构化日志、崩溃/ANR、应用/进程/设备信息。只返回文本/JSON，不传截图，不模拟触控。包名为 `com.f0x1d.logfox.ai`，可与原版 LogFox 共存。
 
 [![license](https://img.shields.io/github/license/F0x1d/LogFox)](./LICENSE)
 [![release](https://img.shields.io/github/v/release/F0x1d/LogFox)](https://github.com/F0x1d/LogFox/releases/latest)
@@ -37,55 +37,57 @@ Yet another LogCat reader for Android
   <img src="./metadata/en-US/images/phoneScreenshots/5.png" width="30%" />
 </p>
 
-## LogFox AI（MCP）
+## LogFox AI（MCP 调试）
 
 ### 功能
 
 - 本地 MCP（JSON-RPC 2.0 over HTTP），默认监听 `127.0.0.1:18923`，不联网
-- 无障碍触控：点击、长按、滑动、多指手势、滚动、输入、返回/主页/最近任务、启动应用、截图、唤醒
-- AI 友好能力：`observe` 一次返回界面摘要 + 可点元素 + 可选截图；`ref` 定位；`wait_for` / `wait_idle`；`batch` 多步执行；`logcat`
-- 设置页：`设置 → AI 与 MCP`，可开关服务、改端口、复制地址、查看工具与调用记录
+- 只返回文本/JSON：**不截图、不模拟触控**
+- 结构化日志：`package` / `pid` / `tag` / 级别 / 关键字 / 正则过滤
+- 崩溃：LogFox 崩溃库（Java/JNI/ANR）+ 系统 crash buffer，解析出包名、PID、异常、堆栈
+- 应用/进程/设备信息；`dumpsys` 白名单；一键诊断包
+- 设置页：`设置 → AI 调试`
 
 ### 使用
 
 1. 安装 `com.f0x1d.logfox.ai`
-2. 打开 `设置 → AI 与 MCP`，点「无障碍服务」并按系统提示开启
-3. 打开「启用 MCP 服务」，确认状态显示「运行中」
+2. 打开 `设置 → AI 调试 → 终端与日志权限`，授权 **Shizuku**（推荐，LogFox 已有）或给应用 `READ_LOGS`
+3. 打开「启用 MCP 服务」，确认状态「运行中」
 4. 在 MCP 客户端里添加 HTTP 服务：`http://127.0.0.1:18923/mcp`（Streamable HTTP）
 
 ### MCP 工具
 
-`status` `observe` `ui_dump` `find` `tap` `tap_ref` `tap_text` `long_press` `swipe`
-`gesture` `scroll` `key` `text` `open_app` `list_apps` `screenshot` `wait_for`
-`wait_idle` `clipboard` `wake` `toast` `batch` `logcat` `help`
+`status` `device_info` `apps_list` `app_info` `processes`
+`logs_dump` `logs_wait` `log_stats`
+`crashes_list` `crash_detail` `crash_buffer` `crash_watch`
+`debug_report` `dumpsys` `batch` `help`
 
-推荐给 AI 的调用顺序：
+推荐调试流程：
 
 ```
-observe → tap_ref / tap_text / swipe / text → wait_idle 或 wait_for → observe
+app_info → logs_dump(level=W/E) → crash_buffer / crashes_list
+        → crash_detail → dumpsys
 ```
 
-`ref` 只在最近一次 `observe` / `ui_dump` / `find` 之后有效；坐标是物理像素；截图默认缩放到 0.5。
+复现崩溃时用 `crash_watch`；需要一次拿全量时用 `debug_report`。
 
 ### 构建
 
 仓库自带 GitHub Actions（`.github/workflows/build-ai.yml`）：
 
-- 打开 Actions → `Build LogFox AI` → Run workflow
+- Actions → `Build LogFox AI` → Run workflow
 - 构建完成后在 Artifacts 下载 `logfox-ai-debug`
 
-本地构建（Linux/macOS，JDK 21 + Android SDK 36）：
+本地构建（JDK 21 + Android SDK 36）：
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-ARM64 Linux 主机需要把 aapt2/aidl 换成原生版本，可参考 `arm64-tools` 或 AndroidIDE 的方案。
-
 ### 安全
 
-- MCP 只绑定 `127.0.0.1`，不会上传任何数据
-- 无障碍服务能读取屏幕内容并模拟操作，请只在可信的 MCP 客户端中使用
+- MCP 只绑定 `127.0.0.1`，不上传数据
+- 日志/进程信息可能包含敏感内容，请只在可信的 MCP 客户端中使用
 - 服务默认无鉴权；不需要时在设置里关闭
 
 ## License

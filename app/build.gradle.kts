@@ -84,6 +84,7 @@ dependencies {
     implementation(libs.coil)
 
     implementation(libs.bundles.androidx)
+    implementation(libs.bundles.shizuku)
     implementation(libs.material)
 
     implementation(libs.bundles.androidx.navigation)

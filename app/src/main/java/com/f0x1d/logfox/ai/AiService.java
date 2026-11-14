@@ -65,7 +65,7 @@ public class AiService extends Service {
 
         startForeground(NOTIFICATION_ID, buildNotification("正在启动…"));
 
-        if (server == null) server = new AiMcpServer(this);
+        if (server == null) server = new AiMcpServer(this, AiDebug.create(this));
         if (!server.running()) {
             final AiMcpServer srv = server;
             new Thread(() -> {

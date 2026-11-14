@@ -10,7 +10,7 @@
         <SwitchPreferenceCompat
             android:key="ai_enabled"
             android:title="启用 MCP 服务"
-            android:summary="本地 HTTP 服务，供 AI 连接"
+            android:summary="本地 HTTP 调试服务，供 AI 连接"
             android:icon="@drawable/ic_settings_service"
             app:iconSpaceReserved="false"
             app:widgetLayout="@layout/preference_material_switch" />
@@ -35,13 +35,13 @@
     </PreferenceCategory>
 
     <PreferenceCategory
-        android:title="权限"
+        android:title="调试数据"
         app:iconSpaceReserved="false"
         app:allowDividerAbove="false">
 
         <Preference
-            android:key="ai_access"
-            android:title="无障碍服务"
+            android:key="ai_terminal"
+            android:title="终端与日志权限"
             android:icon="@drawable/ic_settings_ui" />
     </PreferenceCategory>
 
@@ -72,7 +72,7 @@
         <Preference
             android:key="ai_about"
             android:title="LogFox AI"
-            android:summary="基于 LogFox · 数据仅在本机 · MCP 不联网"
+            android:summary="基于 LogFox · 只读调试数据 · 不传截图、不模拟触控"
             android:selectable="false"
             android:icon="@drawable/ic_settings_info" />
     </PreferenceCategory>
