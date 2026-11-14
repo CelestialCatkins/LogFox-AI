@@ -402,7 +402,7 @@ public final class AiMcpServer {
                 s("{\"type\":\"object\",\"properties\":{\"steps\":{\"type\":\"array\","
                         + "\"items\":{\"type\":\"object\",\"properties\":{"
                         + "\"tool\":{\"type\":\"string\"},\"arguments\":{\"type\":\"object\"},"
-                        + "\"wait_ms\":{\"type\":\"integer\"}}}}}")));
+                        + "\"wait_ms\":{\"type\":\"integer\"}}}}}}")));
         a.put(tool("logcat", "Read recent logcat lines (needs READ_LOGS/Shizuku on modern Android).",
                 s("{\"type\":\"object\",\"properties\":{\"lines\":{\"type\":\"integer\",\"default\":150},"
                         + "\"contains\":{\"type\":\"string\"}}}")));
