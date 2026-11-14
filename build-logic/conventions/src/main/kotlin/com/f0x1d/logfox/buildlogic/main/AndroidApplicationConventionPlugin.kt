@@ -49,9 +49,6 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
                         )
                     }
 
-                    debug {
-                        applicationIdSuffix = ".debug"
-                    }
                 }
             }
 

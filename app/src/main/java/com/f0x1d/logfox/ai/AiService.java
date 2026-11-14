@@ -67,13 +67,16 @@ public class AiService extends Service {
 
         if (server == null) server = new AiMcpServer(this);
         if (!server.running()) {
-            boolean ok = server.start(AiPrefs.port(this));
-            port = server.port();
-            running = ok && server.running();
-            AiLog.i("svc", "server start=" + running + " port=" + port);
-            updateNotification(running
-                    ? "MCP 已就绪 · 127.0.0.1:" + port + "/mcp"
-                    : "端口被占用，未能启动");
+            final AiMcpServer srv = server;
+            new Thread(() -> {
+                boolean ok = srv.start(AiPrefs.port(AiService.this));
+                port = srv.port();
+                running = ok && srv.running();
+                AiLog.i("svc", "server start=" + running + " port=" + port);
+                updateNotification(running
+                        ? "MCP 已就绪 · 127.0.0.1:" + port + "/mcp"
+                        : "端口被占用，未能启动");
+            }, "logfox-ai-start").start();
         } else {
             running = true;
             port = server.port();
